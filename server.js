@@ -77,7 +77,7 @@ app.get('/api/search', (req, res) => {
                FROM users2 
                WHERE name LIKE ? AND is_verified = 1
                LIMIT 10`;
-  db.pool(sql, [`%${searchQuery}%`], (err, results) => {
+  pool.query(sql, [`%${searchQuery}%`], (err, results) => {
     if (err) {
       console.error("Search error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -93,7 +93,7 @@ app.post("/login", (req, res) => {
   const { email, password } = req.body;
   console.log("Login attempt for email:", email);
   const sql = "SELECT id, email, password, registration_number, is_verified FROM users2 WHERE email = ?";
-  db.pool(sql, [email], async (err, result) => {
+  pool.query(sql, [email], async (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ error: "Database error" });
@@ -135,7 +135,7 @@ app.post("/signup", (req, res) => {
     whatsapp_number
   } = req.body;
   const checkEmailSQL = "SELECT * FROM users2 WHERE email = ?";
-  db.pool(checkEmailSQL, [email], (err, result) => {
+  pool.query(checkEmailSQL, [email], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ success: false, message: "Database error" });
@@ -158,7 +158,7 @@ app.post("/signup", (req, res) => {
         is_verified
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    db.pool(
+    pool.query(
       insertUserSQL,
       [name, email, password, registration_number, graduation_year, department, whatsapp_number, false],
       (err, result) => {
@@ -182,7 +182,7 @@ app.get('/api/ecard/status', authenticateToken, (req, res) => {
   const userId = req.user.id;
   const registrationNumber = req.user.registration_number;
   const sql = "SELECT status FROM e_cards WHERE user_id = ? AND registration_number = ?";
-  db.pool(sql, [userId, registrationNumber], (err, result) => {
+  pool.query(sql, [userId, registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -208,7 +208,7 @@ app.post('/api/ecard/request', authenticateToken, upload.single('cardImage'), (r
   const formattedExpiryDate = expiryDate.toISOString().split('T')[0];
   const cardImagePath = req.file ? req.file.filename : null;
   const checkSql = "SELECT * FROM e_cards WHERE user_id = ? AND registration_number = ?";
-  db.pool(checkSql, [userId, registrationNumber], (err, result) => {
+  pool.query(checkSql, [userId, registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -224,7 +224,7 @@ app.post('/api/ecard/request', authenticateToken, upload.single('cardImage'), (r
             expiry_date = ?
         WHERE user_id = ? AND registration_number = ?
       `;
-      db.pool(updateSql, [cardImagePath, formattedExpiryDate, userId, registrationNumber], (err, updateResult) => {
+      pool.query(updateSql, [cardImagePath, formattedExpiryDate, userId, registrationNumber], (err, updateResult) => {
         if (err) {
           console.error("Database error:", err);
           return res.status(500).json({ message: "Database error" });
@@ -237,7 +237,7 @@ app.post('/api/ecard/request', authenticateToken, upload.single('cardImage'), (r
         (user_id, registration_number, card_image, expiry_date)
         VALUES (?, ?, ?, ?)
       `;
-      db.pool(insertSql, [userId, registrationNumber, cardImagePath, formattedExpiryDate], (err, insertResult) => {
+      pool.query(insertSql, [userId, registrationNumber, cardImagePath, formattedExpiryDate], (err, insertResult) => {
         if (err) {
           console.error("Database error:", err);
           return res.status(500).json({ message: "Database error" });
@@ -252,7 +252,7 @@ app.get('/api/ecard/download', authenticateToken, (req, res) => {
   const userId = req.user.id;
   const registrationNumber = req.user.registration_number;
   const sql = "SELECT card_image FROM e_cards WHERE user_id = ? AND registration_number = ? AND status = 'approved'";
-  db.pool(sql, [userId, registrationNumber], (err, result) => {
+  pool.query(sql, [userId, registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -279,7 +279,7 @@ app.get('/api/ecard/view', authenticateToken, (req, res) => {
   const userId = req.user.id;
   const registrationNumber = req.user.registration_number;
   const sql = "SELECT card_image FROM e_cards WHERE user_id = ? AND registration_number = ? AND status = 'approved'";
-  db.pool(sql, [userId, registrationNumber], (err, result) => {
+  pool.query(sql, [userId, registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -304,7 +304,7 @@ app.get('/api/profile/:registrationNumber', (req, res) => {
                is_employed, looking_for_job, graduation_year, department 
                FROM users2 
                WHERE registration_number = ?`;
-  db.pool(sql, [registrationNumber], (err, result) => {
+  pool.query(sql, [registrationNumber], (err, result) => {
     if (err) {
       console.error("Profile fetch error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -330,7 +330,7 @@ app.get('/api/profile/:registrationNumber', (req, res) => {
 app.get('/api/education/:registrationNumber', (req, res) => {
   const regNum = req.params.registrationNumber;
   const sql = "SELECT * FROM edu_info WHERE registration_number = ?";
-  db.pool(sql, [regNum], (err, result) => {
+  pool.query(sql, [regNum], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     res.json(result[0] || {});
   });
@@ -339,7 +339,7 @@ app.get('/api/education/:registrationNumber', (req, res) => {
 app.get('/api/skills/:registrationNumber', (req, res) => {
   const regNum = req.params.registrationNumber;
   const sql = "SELECT skills FROM user_skills_achievements WHERE registration_number = ?";
-  db.pool(sql, [regNum], (err, result) => {
+  pool.query(sql, [regNum], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     const skills = result[0]?.skills ? JSON.parse(result[0].skills) : [];
     res.json(skills);
@@ -349,7 +349,7 @@ app.get('/api/skills/:registrationNumber', (req, res) => {
 app.get('/api/internships/:registrationNumber', (req, res) => {
   const regNum = req.params.registrationNumber;
   const sql = "SELECT * FROM internships WHERE registration_number = ? ORDER BY start_date DESC";
-  db.pool(sql, [regNum], (err, result) => {
+  pool.query(sql, [regNum], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     res.json(result);
   });
@@ -358,7 +358,7 @@ app.get('/api/internships/:registrationNumber', (req, res) => {
 app.get('/api/projects/:registrationNumber', (req, res) => {
   const regNum = req.params.registrationNumber;
   const sql = "SELECT * FROM projects WHERE registration_number = ? ORDER BY completion_date DESC";
-  db.pool(sql, [regNum], (err, result) => {
+  pool.query(sql, [regNum], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     res.json(result);
   });
@@ -367,7 +367,7 @@ app.get('/api/projects/:registrationNumber', (req, res) => {
 app.get('/api/achievements/:registrationNumber', (req, res) => {
   const regNum = req.params.registrationNumber;
   const sql = "SELECT * FROM achievements WHERE registration_number = ? ORDER BY id DESC";
-  db.pool(sql, [regNum], (err, result) => {
+  pool.query(sql, [regNum], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     res.json(result);
   });
@@ -376,7 +376,7 @@ app.get('/api/achievements/:registrationNumber', (req, res) => {
 app.get("/api/profile", authenticateToken, (req, res) => {
   const userId = req.user.id;
   const sql = "SELECT name, whatsapp_number, profile_picture, certificates, is_employed, looking_for_job, graduation_year, department FROM users2 WHERE id = ?";
-  db.pool(sql, [userId], (err, result) => {
+  pool.query(sql, [userId], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     if (result.length > 0) {
       const user = result[0];
@@ -434,7 +434,7 @@ app.post(
     }
     sql += " WHERE id = ?";
     values.push(userId);
-    db.pool(sql, values, (err, result) => {
+    pool.query(sql, values, (err, result) => {
       if (err) {
         console.error("Error updating profile:", err);
         return res.status(500).json({ message: "Database error" });
@@ -461,7 +461,7 @@ app.post("/api/education", authenticateToken, (req, res) => {
     fsc_institute = VALUES(fsc_institute), fsc_degree = VALUES(fsc_degree),
     fsc_year = VALUES(fsc_year), fsc_percentage = VALUES(fsc_percentage);
   `;
-  db.pool(query, [registrationNumber, matricInstitute, matricDegree, matricYear, matricPercentage, fscInstitute, fscDegree, fscYear, fscPercentage], (err, result) => {
+  pool.query(query, [registrationNumber, matricInstitute, matricDegree, matricYear, matricPercentage, fscInstitute, fscDegree, fscYear, fscPercentage], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -473,7 +473,7 @@ app.post("/api/education", authenticateToken, (req, res) => {
 app.get("/api/education", authenticateToken, (req, res) => {
   const registrationNumber = req.user.registration_number;
   const sql = "SELECT * FROM edu_info WHERE registration_number = ?";
-  db.pool(sql, [registrationNumber], (err, result) => {
+  pool.query(sql, [registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -485,7 +485,7 @@ app.get("/api/education", authenticateToken, (req, res) => {
 app.get('/api/internships', authenticateToken, (req, res) => {
   const registrationNumber = req.user.registration_number;
   const sql = "SELECT * FROM internships WHERE registration_number = ?";
-  db.pool(sql, [registrationNumber], (err, result) => {
+  pool.query(sql, [registrationNumber], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     res.json(result);
   });
@@ -499,7 +499,7 @@ app.post('/api/internships', authenticateToken, (req, res) => {
     (registration_number, title, company, duration, start_date, end_date, description, paid)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `;
-  db.pool(sql, 
+  pool.query(sql, 
     [registrationNumber, title, company, duration, start_date, end_date, description, paid], 
     (err, result) => {
       if (err) {
@@ -521,7 +521,7 @@ app.put('/api/internships/:id', authenticateToken, (req, res) => {
   const internshipId = req.params.id;
   const { title, company, duration, start_date, end_date, description, paid } = req.body;
   const checkQuery = "SELECT * FROM internships WHERE id = ? AND registration_number = ?";
-  db.pool(checkQuery, [internshipId, registrationNumber], (err, result) => {
+  pool.query(checkQuery, [internshipId, registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -535,7 +535,7 @@ app.put('/api/internships/:id', authenticateToken, (req, res) => {
           start_date = ?, end_date = ?, description = ?, paid = ? 
       WHERE id = ? AND registration_number = ?
     `;
-    db.pool(updateQuery, 
+    pool.query(updateQuery, 
       [title, company, duration, start_date, end_date, description, paid, internshipId, registrationNumber], 
       (err, updateResult) => {
         if (err) {
@@ -560,7 +560,7 @@ app.put('/api/internships/:id', authenticateToken, (req, res) => {
 
 app.delete('/api/internships/:id', authenticateToken, (req, res) => {
   const sql = "DELETE FROM internships WHERE id = ?";
-  db.pool(sql, [req.params.id], (err, result) => {
+  pool.query(sql, [req.params.id], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     res.json({ message: "Internship deleted successfully" });
   });
@@ -569,7 +569,7 @@ app.delete('/api/internships/:id', authenticateToken, (req, res) => {
 app.get('/api/projects', authenticateToken, (req, res) => {
   const registrationNumber = req.user.registration_number;
   const sql = "SELECT * FROM projects WHERE registration_number = ? ORDER BY completion_date DESC";
-  db.pool(sql, [registrationNumber], (err, result) => {
+  pool.query(sql, [registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -586,7 +586,7 @@ app.post('/api/projects', authenticateToken, (req, res) => {
     (registration_number, project_title, project_description, completion_date, months_taken)
     VALUES (?, ?, ?, ?, ?)
   `;
-  db.pool(sql, 
+  pool.query(sql, 
     [registrationNumber, project_title, project_description, completion_date, months_taken], 
     (err, result) => {
       if (err) {
@@ -608,7 +608,7 @@ app.put('/api/projects/:id', authenticateToken, (req, res) => {
   const projectId = req.params.id;
   const { project_title, project_description, completion_date, months_taken } = req.body;
   const checkQuery = "SELECT * FROM projects WHERE id = ? AND registration_number = ?";
-  db.pool(checkQuery, [projectId, registrationNumber], (err, result) => {
+  pool.query(checkQuery, [projectId, registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -621,7 +621,7 @@ app.put('/api/projects/:id', authenticateToken, (req, res) => {
       SET project_title = ?, project_description = ?, completion_date = ?, months_taken = ? 
       WHERE id = ? AND registration_number = ?
     `;
-    db.pool(updateQuery, 
+    pool.query(updateQuery, 
       [project_title, project_description, completion_date, months_taken, projectId, registrationNumber], 
       (err, updateResult) => {
         if (err) {
@@ -645,7 +645,7 @@ app.delete('/api/projects/:id', authenticateToken, (req, res) => {
   const registrationNumber = req.user.registration_number;
   const projectId = req.params.id;
   const checkQuery = "SELECT * FROM projects WHERE id = ? AND registration_number = ?";
-  db.pool(checkQuery, [projectId, registrationNumber], (err, result) => {
+  pool.query(checkQuery, [projectId, registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -654,7 +654,7 @@ app.delete('/api/projects/:id', authenticateToken, (req, res) => {
       return res.status(403).json({ message: "Unauthorized access or project not found" });
     }
     const deleteQuery = "DELETE FROM projects WHERE id = ? AND registration_number = ?";
-    db.pool(deleteQuery, [projectId, registrationNumber], (err, deleteResult) => {
+    pool.query(deleteQuery, [projectId, registrationNumber], (err, deleteResult) => {
       if (err) {
         console.error("Database error:", err);
         return res.status(500).json({ message: "Database error deleting project" });
@@ -667,7 +667,7 @@ app.delete('/api/projects/:id', authenticateToken, (req, res) => {
 app.get('/api/jobs', authenticateToken, (req, res) => {
   const registrationNumber = req.user.registration_number;
   const sql = "SELECT * FROM jobs WHERE registration_number = ?";
-  db.pool(sql, [registrationNumber], (err, result) => {
+  pool.query(sql, [registrationNumber], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     res.json(result);
   });
@@ -681,7 +681,7 @@ app.post('/api/jobs', authenticateToken, (req, res) => {
     (registration_number, job_title, organization, joining_date, job_description)
     VALUES (?, ?, ?, ?, ?)
   `;
-  db.pool(sql, 
+  pool.query(sql, 
     [registrationNumber, job_title, organization, joining_date, job_description], 
     (err, result) => {
       if (err) {
@@ -703,7 +703,7 @@ app.put('/api/jobs/:id', authenticateToken, (req, res) => {
   const jobId = req.params.id;
   const { job_title, organization, joining_date, job_description } = req.body;
   const checkQuery = "SELECT * FROM jobs WHERE id = ? AND registration_number = ?";
-  db.pool(checkQuery, [jobId, registrationNumber], (err, result) => {
+  pool.query(checkQuery, [jobId, registrationNumber], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     if (result.length === 0) {
       return res.status(403).json({ message: "Unauthorized access or job not found" });
@@ -713,7 +713,7 @@ app.put('/api/jobs/:id', authenticateToken, (req, res) => {
       SET job_title = ?, organization = ?, joining_date = ?, job_description = ?
       WHERE id = ? AND registration_number = ?
     `;
-    db.pool(updateQuery, 
+    pool.query(updateQuery, 
       [job_title, organization, joining_date, job_description, jobId, registrationNumber], 
       (err, updateResult) => {
         if (err) return res.status(500).json({ message: "Database error updating job" });
@@ -730,7 +730,7 @@ app.put('/api/jobs/:id', authenticateToken, (req, res) => {
 app.get('/api/skills', authenticateToken, (req, res) => {
   const regNum = req.user.registration_number;
   const sql = "SELECT skills FROM user_skills_achievements WHERE registration_number = ?";
-  db.pool(sql, [regNum], (err, result) => {
+  pool.query(sql, [regNum], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     let skills = [];
     if (result[0]?.skills) {
@@ -755,7 +755,7 @@ app.post('/api/skills', authenticateToken, (req, res) => {
     ON DUPLICATE KEY UPDATE
     skills = VALUES(skills)
   `;
-  db.pool(sql, [regNum, JSON.stringify(skills)], (err, result) => {
+  pool.query(sql, [regNum, JSON.stringify(skills)], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     res.json({ skills });
   });
@@ -764,7 +764,7 @@ app.post('/api/skills', authenticateToken, (req, res) => {
 app.delete('/api/skills/:id', authenticateToken, (req, res) => {
   const regNum = req.user.registration_number;
   const sql = "DELETE FROM user_skills_achievements WHERE id = ? AND registration_number = ? AND type = 'skill'";
-  db.pool(sql, [req.params.id, regNum], (err, result) => {
+  pool.query(sql, [req.params.id, regNum], (err, result) => {
     if (err) return res.status(500).json({ message: "Database error" });
     res.json({ message: "Skill deleted successfully" });
   });
@@ -773,7 +773,7 @@ app.delete('/api/skills/:id', authenticateToken, (req, res) => {
 app.get('/api/achievements', authenticateToken, (req, res) => {
   const registrationNumber = req.user.registration_number;
   const sql = "SELECT * FROM achievements WHERE registration_number = ?";
-  db.pool(sql, [registrationNumber], (err, result) => {
+  pool.query(sql, [registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -791,7 +791,7 @@ app.post('/api/achievements', authenticateToken, upload.single('file'), (req, re
     (registration_number, title, details, file_path)
     VALUES (?, ?, ?, ?)
   `;
-  db.pool(sql, 
+  pool.query(sql, 
     [registrationNumber, title, details, filePath], 
     (err, result) => {
       if (err) {
@@ -815,7 +815,7 @@ app.put('/api/achievements/:id', authenticateToken, upload.single('file'), (req,
   const achievementId = req.params.id;
   const { title, details } = req.body;
   const checkQuery = "SELECT * FROM achievements WHERE id = ? AND registration_number = ?";
-  db.pool(checkQuery, [achievementId, registrationNumber], (err, result) => {
+  pool.query(checkQuery, [achievementId, registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -840,12 +840,12 @@ app.put('/api/achievements/:id', authenticateToken, upload.single('file'), (req,
       `;
       queryParams = [title, details, achievementId, registrationNumber];
     }
-    db.pool(updateQuery, queryParams, (err, updateResult) => {
+    pool.query(updateQuery, queryParams, (err, updateResult) => {
       if (err) {
         console.error("Database error:", err);
         return res.status(500).json({ message: "Database error updating achievement" });
       }
-      db.pool("SELECT * FROM achievements WHERE id = ?", [achievementId], (err, fetchResult) => {
+      pool.query("SELECT * FROM achievements WHERE id = ?", [achievementId], (err, fetchResult) => {
         if (err || fetchResult.length === 0) {
           console.error("Error fetching updated achievement:", err);
           return res.status(500).json({ message: "Error fetching updated achievement" });
@@ -860,7 +860,7 @@ app.delete('/api/achievements/:id', authenticateToken, (req, res) => {
   const registrationNumber = req.user.registration_number;
   const achievementId = req.params.id;
   const checkQuery = "SELECT * FROM achievements WHERE id = ? AND registration_number = ?";
-  db.pool(checkQuery, [achievementId, registrationNumber], (err, result) => {
+  pool.query(checkQuery, [achievementId, registrationNumber], (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ message: "Database error" });
@@ -869,7 +869,7 @@ app.delete('/api/achievements/:id', authenticateToken, (req, res) => {
       return res.status(403).json({ message: "Unauthorized access or achievement not found" });
     }
     const deleteQuery = "DELETE FROM achievements WHERE id = ? AND registration_number = ?";
-    db.pool(deleteQuery, [achievementId, registrationNumber], (err, deleteResult) => {
+    pool.query(deleteQuery, [achievementId, registrationNumber], (err, deleteResult) => {
       if (err) {
         console.error("Database error:", err);
         return res.status(500).json({ message: "Database error deleting achievement" });
