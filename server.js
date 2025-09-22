@@ -10,7 +10,7 @@ const fs = require("fs");
 const bcrypt = require("bcryptjs");
 
 const app = express();
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
+app.use(cors({ origin: 'https://pafiast-alumni-frontend.vercel.app', credentials: true }));
 app.use(express.json());
 
 // Configure multer for disk storage
