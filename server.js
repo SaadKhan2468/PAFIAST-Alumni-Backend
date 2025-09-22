@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require("express");
 const multer = require("multer");
-const mysql = require("mysql2");
+const mysql = require("mysql2/promise");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const path = require("path");
@@ -33,22 +33,29 @@ app.use('/uploads', express.static('uploads', {
 }));
 
 // Database connection
-const db = mysql.createConnection({
+const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   port: process.env.DB_PORT,
   ssl: {
-    rejectUnauthorized: true // Likely causing the error
-  }
-  
+    rejectUnauthorized: false  // Test; switch to CA cert later
+  },
+  waitForConnections: true,
+  connectionLimit: 10, // Aiven free tier supports multiple connections
+  queueLimit: 0
 });
 
-db.connect((err) => {
-  if (err) console.error("Database connection failed: " + err);
-  else console.log("Connected to database.");
-});
+// Test pool connection on startup
+pool.getConnection()
+  .then(conn => {
+    console.log('Connected to Aiven MySQL database.');
+    conn.release();
+  })
+  .catch(err => {
+    console.error('Database connection failed:', err.message);
+  });
 
 // Middleware to verify JWT
 const authenticateToken = (req, res, next) => {
