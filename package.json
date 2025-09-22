@@ -1,67 +1,26 @@
 {
-  "name": "alumni",
-  "version": "0.1.0",
-  "private": true,
-  "dependencies": {
-    "@heroicons/react": "^1.0.0",
-    "aos": "^2.3.4",
-    "axios": "^1.7.9",
-    "bcryptjs": "^2.4.3",  
-    "body-parser": "^1.20.3",
-    "cors": "^2.8.5",
-    "cra-template": "1.2.0",
-    "dialogflow": "^4.0.3",
-    "dotenv": "^16.6.1",  
-    "express": "^4.17.1",  
-    "fs": "^0.0.1-security",
-    "google-auth-library": "^9.15.1",
-    "html2canvas": "^1.4.1",
-    "jsonwebtoken": "^9.0.0",
-    "jwt-decode": "^4.0.0",
-    "lucide-react": "^0.475.0",
-    "multer": "^1.4.5-lts.1",
-    "mysql2": "^3.0.0",
-    "nodemailer": "^6.9.0",
-    "path": "^0.12.7",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-icons": "^5.4.0",
-    "react-router-dom": "^6.28.2",
-    "react-scripts": "^5.0.1",
-    "sharp": "^0.34.2",
-    "web-vitals": "^4.2.4"
-  },
+  "name": "your-app",
+  "version": "1.0.0",
+  "description": "...",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "echo 'No build required for backend'",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "express": "^4.17.1",
+    "bcryptjs": "^2.4.3",
+    "mysql2": "^3.0.0",
+    "cors": "^2.8.5",
+    "jsonwebtoken": "^9.0.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.0",
+    "body-parser": "^1.20.3",
+    "path": "^0.12.7",
+    "fs": "^0.0.1-security"
   },
   "devDependencies": {
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.5.1",
-    "postcss-cli": "^11.0.0",
-    "tailwindcss": "^3.0.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"  
+    "nodemon": "^2.0.15"
   }
 }
