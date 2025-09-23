@@ -22,7 +22,6 @@ const storage = multer.diskStorage({
     cb(null, Date.now() + '-' + file.originalname);
   }
 });
-
 const upload = multer({ storage: storage });
 
 // Serve static files from uploads directory
@@ -40,10 +39,10 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME,
   port: process.env.DB_PORT,
   ssl: {
-    rejectUnauthorized: false  // Test; switch to CA cert later
+    rejectUnauthorized: false
   },
   waitForConnections: true,
-  connectionLimit: 10, // Aiven free tier supports multiple connections
+  connectionLimit: 10,
   queueLimit: 0
 });
 
@@ -70,251 +69,103 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Your routes
-// Corrected /api/search route
-app.get('/api/search', async (req, res) => {
-  const searchQuery = req.query.q;
-  const sql = `SELECT id, name, profile_picture, registration_number, department 
-               FROM users2 
-               WHERE name LIKE ? AND is_verified = 1
-               LIMIT 10`;
+// Profile Routes
+// GET /api/profile - Fetch authenticated user's profile
+app.get('/api/profile', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const sql = `
+    SELECT 
+      name, 
+      profile_picture AS profilePicture, 
+      whatsapp_number AS whatsapp,
+      is_employed AS isEmployed, 
+      looking_for_job AS lookingForJob, 
+      certificates,
+      graduation_year AS graduationYear, 
+      department, 
+      registration_number AS registrationNumber
+    FROM users2 
+    WHERE registration_number = ? AND is_verified = 1
+  `;
   try {
-    // Use async/await to handle the promise
-    const [results] = await pool.query(sql, [`%${searchQuery}%`]);
-    res.json(results.map(user => ({
-      ...user,
-      profilePicture: user.profile_picture ? `/uploads/${user.profile_picture}` : null
-    })));
+    const [results] = await pool.query(sql, [registrationNumber]);
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Profile not found or not verified" });
+    }
+    const user = results[0];
+    user.profilePicture = user.profilePicture ? `/uploads/${user.profilePicture}` : null;
+    user.certificates = user.certificates ? `/uploads/${user.certificates}` : null;
+    res.json(user);
   } catch (err) {
-    console.error("Search error:", err);
+    console.error("Profile fetch error:", err);
     res.status(500).json({ message: "Database error" });
   }
 });
 
-// Corrected Login Route
-app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-  const sql = "SELECT id, email, password, registration_number, is_verified FROM users2 WHERE email = ?";
-  
-  try {
-    // Use async/await to handle the database promise
-    const [result] = await pool.query(sql, [email]);
-    if (result.length === 0) {
-      return res.status(401).json({ success: false, message: "Invalid credentials" });
-    }
-    const user = result[0];
-    if (!user.is_verified) {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Account pending verification. Please wait for admin approval." 
-      });
-    }
-    
-    // Use await for the bcrypt comparison
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (isMatch) {
-      const token = jwt.sign(
-        { id: user.id, email: user.email, registration_number: user.registration_number },
-        process.env.JWT_SECRET,
-        { expiresIn: "1h" }
-      );
-      return res.json({ success: true, message: "Login successful", token });
-    } else {
-      return res.status(401).json({ success: false, message: "Invalid credentials" });
-    }
-  } catch (err) {
-    console.error("Database or login error:", err);
-    res.status(500).json({ error: "Database error" });
+// POST /api/profile - Update profile
+const uploadProfile = upload.fields([
+  { name: 'profilePicture', maxCount: 1 },
+  { name: 'certificates', maxCount: 1 }
+]);
+app.post('/api/profile', authenticateToken, uploadProfile, async (req, res) => {
+  const { name, whatsapp, isEmployed, lookingForJob } = req.body;
+  const registrationNumber = req.user.registration_number;
+
+  let profilePicturePath = null;
+  let certificatesPath = null;
+  if (req.files && req.files.profilePicture) {
+    profilePicturePath = req.files.profilePicture[0].filename;
   }
-});
+  if (req.files && req.files.certificates) {
+    certificatesPath = req.files.certificates[0].filename;
+  }
 
-// Corrected Signup Route
-// Corrected Signup Route
-app.post("/signup", async (req, res) => {
-  const {
-    name,
-    email,
-    password, 
-    registration_number,
-    graduation_year,
-    department,
-    whatsapp_number
-  } = req.body;
-  
+  let sql = 'UPDATE users2 SET name = ?, whatsapp_number = ?, is_employed = ?, looking_for_job = ?';
+  const params = [name || null, whatsapp || null, isEmployed === 'true' ? 1 : 0, lookingForJob === 'true' ? 1 : 0];
+
+  if (profilePicturePath) {
+    sql += ', profile_picture = ?';
+    params.push(profilePicturePath);
+  }
+  if (certificatesPath) {
+    sql += ', certificates = ?';
+    params.push(certificatesPath);
+  }
+
+  sql += ' WHERE registration_number = ?';
+  params.push(registrationNumber);
+
   try {
-    const checkEmailSQL = "SELECT * FROM users2 WHERE email = ?";
-    // Use async/await for the database query
-    const [result] = await pool.query(checkEmailSQL, [email]);
-
-    if (result.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Email already in use. Please use a different email or login to your existing account."
-      });
+    const [result] = await pool.query(sql, params);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Profile not found" });
     }
-
-    // Use async/await to securely hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const insertUserSQL = `
-      INSERT INTO users2 (
-        name, 
-        email, 
-        password,
-        registration_number, 
-        graduation_year, 
-        department, 
-        whatsapp_number,
-        is_verified
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    // Use async/await for the database query
-    await pool.query(
-      insertUserSQL,
-      [name, email, hashedPassword, registration_number, graduation_year, department, whatsapp_number, false]
+    const [updated] = await pool.query(
+      'SELECT name, profile_picture AS profilePicture, whatsapp_number AS whatsapp, is_employed AS isEmployed, looking_for_job AS lookingForJob, certificates, graduation_year AS graduationYear, department, registration_number AS registrationNumber FROM users2 WHERE registration_number = ?',
+      [registrationNumber]
     );
-
-    res.status(201).json({
-      success: true,
-      message: "Account created successfully!"
-    });
-
+    const user = updated[0];
+    user.profilePicture = user.profilePicture ? `/uploads/${user.profilePicture}` : null;
+    user.certificates = user.certificates ? `/uploads/${user.certificates}` : null;
+    res.json(user);
   } catch (err) {
-    console.error("Signup error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to create user account. Please try again."
-    });
+    console.error("Profile update error:", err);
+    res.status(500).json({ message: "Database error" });
   }
 });
 
-app.get('/api/ecard/status', authenticateToken, (req, res) => {
-  const userId = req.user.id;
-  const registrationNumber = req.user.registration_number;
-  const sql = "SELECT status FROM e_cards WHERE user_id = ? AND registration_number = ?";
-  pool.query(sql, [userId, registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    if (result.length > 0) {
-      res.json({ 
-        exists: true, 
-        status: result[0].status 
-      });
-    } else {
-      res.json({ 
-        exists: false 
-      });
-    }
-  });
-});
-
-app.post('/api/ecard/request', authenticateToken, upload.single('cardImage'), (req, res) => {
-  const userId = req.user.id;
-  const registrationNumber = req.user.registration_number;
-  const expiryDate = new Date();
-  expiryDate.setFullYear(expiryDate.getFullYear() + 5);
-  const formattedExpiryDate = expiryDate.toISOString().split('T')[0];
-  const cardImagePath = req.file ? req.file.filename : null;
-  const checkSql = "SELECT * FROM e_cards WHERE user_id = ? AND registration_number = ?";
-  pool.query(checkSql, [userId, registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    if (result.length > 0) {
-      const updateSql = `
-        UPDATE e_cards 
-        SET status = 'pending', 
-            request_date = CURRENT_TIMESTAMP, 
-            card_image = ?, 
-            approved_date = NULL, 
-            rejection_reason = NULL,
-            expiry_date = ?
-        WHERE user_id = ? AND registration_number = ?
-      `;
-      pool.query(updateSql, [cardImagePath, formattedExpiryDate, userId, registrationNumber], (err, updateResult) => {
-        if (err) {
-          console.error("Database error:", err);
-          return res.status(500).json({ message: "Database error" });
-        }
-        res.json({ message: "E-Card request updated successfully" });
-      });
-    } else {
-      const insertSql = `
-        INSERT INTO e_cards 
-        (user_id, registration_number, card_image, expiry_date)
-        VALUES (?, ?, ?, ?)
-      `;
-      pool.query(insertSql, [userId, registrationNumber, cardImagePath, formattedExpiryDate], (err, insertResult) => {
-        if (err) {
-          console.error("Database error:", err);
-          return res.status(500).json({ message: "Database error" });
-        }
-        res.json({ message: "E-Card request submitted successfully" });
-      });
-    }
-  });
-});
-
-app.get('/api/ecard/download', authenticateToken, (req, res) => {
-  const userId = req.user.id;
-  const registrationNumber = req.user.registration_number;
-  const sql = "SELECT card_image FROM e_cards WHERE user_id = ? AND registration_number = ? AND status = 'approved'";
-  pool.query(sql, [userId, registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    if (result.length > 0 && result[0].card_image) {
-      const imagePath = path.join(__dirname, 'uploads', result[0].card_image);
-      if (fs.existsSync(imagePath)) {
-        res.download(imagePath, 'PAF-IAST_Alumni_ECard.png', (err) => {
-          if (err) {
-            console.error("Download error:", err);
-            return res.status(404).json({ message: "E-Card file not found" });
-          }
-        });
-      } else {
-        return res.status(404).json({ message: "E-Card file not found on server" });
-      }
-    } else {
-      res.status(404).json({ message: "No approved E-Card found" });
-    }
-  });
-});
-
-app.get('/api/ecard/view', authenticateToken, (req, res) => {
-  const userId = req.user.id;
-  const registrationNumber = req.user.registration_number;
-  const sql = "SELECT card_image FROM e_cards WHERE user_id = ? AND registration_number = ? AND status = 'approved'";
-  pool.query(sql, [userId, registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    if (result.length > 0 && result[0].card_image) {
-      const imagePath = path.join(__dirname, 'uploads', result[0].card_image);
-      if (fs.existsSync(imagePath)) {
-        res.setHeader('Content-Type', 'image/png');
-        fs.createReadStream(imagePath).pipe(res);
-      } else {
-        return res.status(404).json({ message: "E-Card file not found on server" });
-      }
-    } else {
-      res.status(404).json({ message: "No approved E-Card found" });
-    }
-  });
-});
-
-// Public route to view basic profile (from users2 table)
+// GET /api/profile/:registrationNumber - View another user's profile (public)
 app.get('/api/profile/:registrationNumber', async (req, res) => {
   const { registrationNumber } = req.params;
   const sql = `
-    SELECT name, profile_picture AS profilePicture, whatsapp_number AS whatsapp, 
-           is_employed AS isEmployed, looking_for_job AS lookingForJob, 
-           graduation_year AS graduationYear, department, registration_number
+    SELECT 
+      name, 
+      profile_picture AS profilePicture, 
+      whatsapp_number AS whatsapp,
+      is_employed AS isEmployed, 
+      looking_for_job AS lookingForJob, 
+      graduation_year AS graduationYear, 
+      department
     FROM users2 
     WHERE registration_number = ? AND is_verified = 1
   `;
@@ -332,54 +183,385 @@ app.get('/api/profile/:registrationNumber', async (req, res) => {
   }
 });
 
-// Education (from edu_info table)
-app.get('/api/education/:registrationNumber', async (req, res) => {
-  const { registrationNumber } = req.params;
+// Education Routes
+app.get('/api/education', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
   const sql = `
-    SELECT matric_institute, matric_degree, matric_year, matric_percentage,
-           fsc_institute, fsc_degree, fsc_year, fsc_percentage
+    SELECT 
+      matric_institute AS matricInstitute, 
+      matric_degree AS matricDegree, 
+      matric_year AS matricYear, 
+      matric_percentage AS matricPercentage,
+      fsc_institute AS fscInstitute, 
+      fsc_degree AS fscDegree, 
+      fsc_year AS fscYear, 
+      fsc_percentage AS fscPercentage
     FROM edu_info 
     WHERE registration_number = ?
   `;
   try {
     const [results] = await pool.query(sql, [registrationNumber]);
-    res.json(results[0] || null);  // Return first row or null
+    res.json(results[0] || {});
   } catch (err) {
-    console.error("Education error:", err);
+    console.error("Education fetch error:", err);
     res.status(500).json({ message: "Database error" });
   }
 });
 
-// Internships (from internships table)
+app.post('/api/education', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const { matricInstitute, matricDegree, matricYear, matricPercentage, fscInstitute, fscDegree, fscYear, fscPercentage } = req.body;
+  const sql = `
+    INSERT INTO edu_info (registration_number, matric_institute, matric_degree, matric_year, matric_percentage, fsc_institute, fsc_degree, fsc_year, fsc_percentage)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      matric_institute = VALUES(matric_institute),
+      matric_degree = VALUES(matric_degree),
+      matric_year = VALUES(matric_year),
+      matric_percentage = VALUES(matric_percentage),
+      fsc_institute = VALUES(fsc_institute),
+      fsc_degree = VALUES(fsc_degree),
+      fsc_year = VALUES(fsc_year),
+      fsc_percentage = VALUES(fsc_percentage)
+  `;
+  try {
+    const [result] = await pool.query(sql, [registrationNumber, matricInstitute, matricDegree, matricYear, matricPercentage, fscInstitute, fscDegree, fscYear, fscPercentage]);
+    res.json({ message: "Education saved successfully" });
+  } catch (err) {
+    console.error("Education save error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// Skills Routes
+app.get('/api/skills', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const sql = 'SELECT skills FROM user_skills_achievements WHERE registration_number = ?';
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    let skills = [];
+    if (results[0]?.skills) {
+      skills = JSON.parse(results[0].skills);
+    }
+    res.json({ skills });
+  } catch (err) {
+    console.error("Skills fetch error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.post('/api/skills', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const { skills } = req.body;
+  const sql = `
+    INSERT INTO user_skills_achievements (registration_number, skills)
+    VALUES (?, ?)
+    ON DUPLICATE KEY UPDATE skills = VALUES(skills)
+  `;
+  try {
+    await pool.query(sql, [registrationNumber, JSON.stringify(skills)]);
+    res.json({ message: "Skills saved successfully" });
+  } catch (err) {
+    console.error("Skills save error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// Projects Routes
+app.get('/api/projects', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const sql = 'SELECT * FROM projects WHERE registration_number = ?';
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    res.json(results);
+  } catch (err) {
+    console.error("Projects fetch error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.post('/api/projects', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const { project_title, project_description, completion_date, months_taken } = req.body;
+  const sql = `
+    INSERT INTO projects (registration_number, project_title, project_description, completion_date, months_taken)
+    VALUES (?, ?, ?, ?, ?)
+  `;
+  try {
+    const [result] = await pool.query(sql, [registrationNumber, project_title, project_description, completion_date, months_taken]);
+    res.json({ id: result.insertId, registration_number: registrationNumber, project_title, project_description, completion_date, months_taken });
+  } catch (err) {
+    console.error("Project save error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.put('/api/projects/:id', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const projectId = req.params.id;
+  const { project_title, project_description, completion_date, months_taken } = req.body;
+  const sql = `
+    UPDATE projects 
+    SET project_title = ?, project_description = ?, completion_date = ?, months_taken = ?
+    WHERE id = ? AND registration_number = ?
+  `;
+  try {
+    const [result] = await pool.query(sql, [project_title, project_description, completion_date, months_taken, projectId, registrationNumber]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Project not found or unauthorized" });
+    }
+    res.json({ id: projectId, registration_number: registrationNumber, project_title, project_description, completion_date, months_taken });
+  } catch (err) {
+    console.error("Project update error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.delete('/api/projects/:id', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const projectId = req.params.id;
+  const sql = 'DELETE FROM projects WHERE id = ? AND registration_number = ?';
+  try {
+    const [result] = await pool.query(sql, [projectId, registrationNumber]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Project not found or unauthorized" });
+    }
+    res.json({ message: "Project deleted successfully" });
+  } catch (err) {
+    console.error("Project delete error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// Internships Routes
+app.get('/api/internships', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const sql = 'SELECT * FROM internships WHERE registration_number = ?';
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    res.json(results);
+  } catch (err) {
+    console.error("Internships fetch error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.post('/api/internships', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const { title, company, duration, start_date, end_date, description, paid } = req.body;
+  const sql = `
+    INSERT INTO internships (registration_number, title, company, duration, start_date, end_date, description, paid)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+  try {
+    const [result] = await pool.query(sql, [registrationNumber, title, company, duration, start_date, end_date, description, paid ? 1 : 0]);
+    res.json({ id: result.insertId, registration_number: registrationNumber, title, company, duration, start_date, end_date, description, paid });
+  } catch (err) {
+    console.error("Internship save error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.put('/api/internships/:id', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const internshipId = req.params.id;
+  const { title, company, duration, start_date, end_date, description, paid } = req.body;
+  const sql = `
+    UPDATE internships 
+    SET title = ?, company = ?, duration = ?, start_date = ?, end_date = ?, description = ?, paid = ?
+    WHERE id = ? AND registration_number = ?
+  `;
+  try {
+    const [result] = await pool.query(sql, [title, company, duration, start_date, end_date, description, paid ? 1 : 0, internshipId, registrationNumber]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Internship not found or unauthorized" });
+    }
+    res.json({ id: internshipId, registration_number: registrationNumber, title, company, duration, start_date, end_date, description, paid });
+  } catch (err) {
+    console.error("Internship update error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// Jobs Routes
+app.get('/api/jobs', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const sql = 'SELECT * FROM jobs WHERE registration_number = ?';
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    res.json(results);
+  } catch (err) {
+    console.error("Jobs fetch error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.post('/api/jobs', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const { job_title, organization, joining_date, job_description } = req.body;
+  const sql = `
+    INSERT INTO jobs (registration_number, job_title, organization, joining_date, job_description)
+    VALUES (?, ?, ?, ?, ?)
+  `;
+  try {
+    const [result] = await pool.query(sql, [registrationNumber, job_title, organization, joining_date, job_description]);
+    res.json({ id: result.insertId, registration_number: registrationNumber, job_title, organization, joining_date, job_description });
+  } catch (err) {
+    console.error("Job save error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.put('/api/jobs/:id', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const jobId = req.params.id;
+  const { job_title, organization, joining_date, job_description } = req.body;
+  const sql = `
+    UPDATE jobs 
+    SET job_title = ?, organization = ?, joining_date = ?, job_description = ?
+    WHERE id = ? AND registration_number = ?
+  `;
+  try {
+    const [result] = await pool.query(sql, [job_title, organization, joining_date, job_description, jobId, registrationNumber]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Job not found or unauthorized" });
+    }
+    res.json({ id: jobId, registration_number: registrationNumber, job_title, organization, joining_date, job_description });
+  } catch (err) {
+    console.error("Job update error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// Achievements Routes
+const uploadAchievement = upload.single('file');
+app.get('/api/achievements', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const sql = 'SELECT * FROM achievements WHERE registration_number = ?';
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    res.json(results);
+  } catch (err) {
+    console.error("Achievements fetch error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.post('/api/achievements', authenticateToken, uploadAchievement, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const { title, details } = req.body;
+  const filePath = req.file ? req.file.filename : null;
+  const sql = `
+    INSERT INTO achievements (registration_number, title, details, file_path)
+    VALUES (?, ?, ?, ?)
+  `;
+  try {
+    const [result] = await pool.query(sql, [registrationNumber, title, details, filePath]);
+    res.json({ id: result.insertId, registration_number: registrationNumber, title, details, file_path: filePath });
+  } catch (err) {
+    console.error("Achievement save error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.put('/api/achievements/:id', authenticateToken, uploadAchievement, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const achievementId = req.params.id;
+  const { title, details } = req.body;
+  const filePath = req.file ? req.file.filename : null;
+
+  let sql = 'UPDATE achievements SET title = ?, details = ?';
+  const params = [title, details];
+  if (filePath) {
+    sql += ', file_path = ?';
+    params.push(filePath);
+  }
+  sql += ' WHERE id = ? AND registration_number = ?';
+  params.push(achievementId, registrationNumber);
+
+  try {
+    const [result] = await pool.query(sql, params);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Achievement not found or unauthorized" });
+    }
+    const [updated] = await pool.query('SELECT * FROM achievements WHERE id = ?', [achievementId]);
+    res.json(updated[0]);
+  } catch (err) {
+    console.error("Achievement update error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+app.delete('/api/achievements/:id', authenticateToken, async (req, res) => {
+  const registrationNumber = req.user.registration_number;
+  const achievementId = req.params.id;
+  const checkQuery = 'SELECT * FROM achievements WHERE id = ? AND registration_number = ?';
+  try {
+    const [checkResult] = await pool.query(checkQuery, [achievementId, registrationNumber]);
+    if (checkResult.length === 0) {
+      return res.status(403).json({ message: "Unauthorized access or achievement not found" });
+    }
+    const deleteQuery = 'DELETE FROM achievements WHERE id = ? AND registration_number = ?';
+    const [result] = await pool.query(deleteQuery, [achievementId, registrationNumber]);
+    res.json({ message: "Achievement deleted successfully" });
+  } catch (err) {
+    console.error("Achievement delete error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// Public Routes for ProfileView.js
+app.get('/api/education/:registrationNumber', async (req, res) => {
+  const { registrationNumber } = req.params;
+  const sql = `
+    SELECT 
+      matric_institute AS matricInstitute, 
+      matric_degree AS matricDegree, 
+      matric_year AS matricYear, 
+      matric_percentage AS matricPercentage,
+      fsc_institute AS fscInstitute, 
+      fsc_degree AS fscDegree, 
+      fsc_year AS fscYear, 
+      fsc_percentage AS fscPercentage
+    FROM edu_info 
+    WHERE registration_number = ?
+  `;
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    res.json(results[0] || null);
+  } catch (err) {
+    console.error("Education view error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
 app.get('/api/internships/:registrationNumber', async (req, res) => {
   const { registrationNumber } = req.params;
-  const sql = "SELECT * FROM internships WHERE registration_number = ?";
+  const sql = 'SELECT * FROM internships WHERE registration_number = ?';
   try {
     const [results] = await pool.query(sql, [registrationNumber]);
     res.json(results);
   } catch (err) {
-    console.error("Internships error:", err);
+    console.error("Internships view error:", err);
     res.status(500).json({ message: "Database error" });
   }
 });
 
-// Projects (from projects table)
 app.get('/api/projects/:registrationNumber', async (req, res) => {
   const { registrationNumber } = req.params;
-  const sql = "SELECT * FROM projects WHERE registration_number = ?";
+  const sql = 'SELECT * FROM projects WHERE registration_number = ?';
   try {
     const [results] = await pool.query(sql, [registrationNumber]);
     res.json(results);
   } catch (err) {
-    console.error("Projects error:", err);
+    console.error("Projects view error:", err);
     res.status(500).json({ message: "Database error" });
   }
 });
 
-// Skills (from user_skills_achievements table)
 app.get('/api/skills/:registrationNumber', async (req, res) => {
   const { registrationNumber } = req.params;
-  const sql = "SELECT skills FROM user_skills_achievements WHERE registration_number = ?";
+  const sql = 'SELECT skills FROM user_skills_achievements WHERE registration_number = ?';
   try {
     const [results] = await pool.query(sql, [registrationNumber]);
     let skills = [];
@@ -388,528 +570,76 @@ app.get('/api/skills/:registrationNumber', async (req, res) => {
     }
     res.json(skills);
   } catch (err) {
-    console.error("Skills error:", err);
+    console.error("Skills view error:", err);
     res.status(500).json({ message: "Database error" });
   }
 });
 
-// Achievements (from achievements table) - Similar to your existing /api/achievements, but parameterized and public
 app.get('/api/achievements/:registrationNumber', async (req, res) => {
   const { registrationNumber } = req.params;
-  const sql = "SELECT * FROM achievements WHERE registration_number = ?";
+  const sql = 'SELECT * FROM achievements WHERE registration_number = ?';
   try {
     const [results] = await pool.query(sql, [registrationNumber]);
     res.json(results);
   } catch (err) {
-    console.error("Achievements error:", err);
+    console.error("Achievements view error:", err);
     res.status(500).json({ message: "Database error" });
   }
 });
 
-app.get("/api/profile", authenticateToken, (req, res) => {
-  const userId = req.user.id;
-  const sql = "SELECT name, whatsapp_number, profile_picture, certificates, is_employed, looking_for_job, graduation_year, department FROM users2 WHERE id = ?";
-  pool.query(sql, [userId], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    if (result.length > 0) {
-      const user = result[0];
-      console.log("Database values:", user);
-      res.json({
-        name: user.name,
-        whatsapp: user.whatsapp_number,
-        profilePicture: user.profile_picture ? `/uploads/${user.profile_picture}` : null,
-        certificates: user.certificates ? `/uploads/${user.certificates}` : null,
-        isEmployed: Boolean(user.is_employed),
-        lookingForJob: Boolean(user.looking_for_job),
-        graduationYear: user.graduation_year,
-        department: user.department,
-        registrationNumber: req.user.registration_number
-      });
-    } else {
-      res.status(404).json({ message: "User not found" });
-    }
-  });
-});
-
-app.post(
-  "/api/profile",
-  authenticateToken,
-  upload.fields([
-    { name: "profilePicture", maxCount: 1 },
-    { name: "certificates", maxCount: 1 }
-  ]),
-  (req, res) => {
-    const userId = req.user.id;
-    const { name, whatsapp, isEmployed, lookingForJob } = req.body;
-    const profilePicture = req.files?.profilePicture?.[0]?.filename;
-    const certificates = req.files?.certificates?.[0]?.filename;
-    let sql = `
-      UPDATE users2 
-      SET 
-        name = ?,
-        whatsapp_number = ?,
-        is_employed = ?,
-        looking_for_job = ?
-    `;
-    let values = [
-      name || null,
-      whatsapp || null,
-      isEmployed === 'true' ? 1 : 0,
-      lookingForJob === 'true' ? 1 : 0
-    ];
-    if (profilePicture) {
-      sql += ", profile_picture = ?";
-      values.push(profilePicture);
-    }
-    if (certificates) {
-      sql += ", certificates = ?";
-      values.push(certificates);
-    }
-    sql += " WHERE id = ?";
-    values.push(userId);
-    pool.query(sql, values, (err, result) => {
-      if (err) {
-        console.error("Error updating profile:", err);
-        return res.status(500).json({ message: "Database error" });
-      }
-      res.json({ message: "Profile updated successfully" });
-    });
+// Existing Routes (from your original code)
+app.get('/api/search', async (req, res) => {
+  const searchQuery = req.query.q;
+  const sql = `
+    SELECT id, name, profile_picture, registration_number, department 
+    FROM users2 
+    WHERE name LIKE ? AND is_verified = 1
+    LIMIT 10
+  `;
+  try {
+    const [results] = await pool.query(sql, [`%${searchQuery}%`]);
+    res.json(results.map(user => ({
+      ...user,
+      profilePicture: user.profile_picture ? `/uploads/${user.profile_picture}` : null
+    })));
+  } catch (err) {
+    console.error("Search error:", err);
+    res.status(500).json({ message: "Database error" });
   }
-);
-
-app.post("/api/education", authenticateToken, (req, res) => {
-  console.log("User registration number from token:", req.user.registration_number);
-  const registrationNumber = req.user.registration_number;
-  const { matricInstitute, matricDegree, matricYear, matricPercentage, fscInstitute, fscDegree, fscYear, fscPercentage } = req.body;
-  if (!registrationNumber) {
-    console.error("Registration number missing in token");
-    return res.status(400).json({ message: "Registration number is required." });
-  }
-  const query = `
-    INSERT INTO edu_info (registration_number, matric_institute, matric_degree, matric_year, matric_percentage, fsc_institute, fsc_degree, fsc_year, fsc_percentage)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE
-    matric_institute = VALUES(matric_institute), matric_degree = VALUES(matric_degree),
-    matric_year = VALUES(matric_year), matric_percentage = VALUES(matric_percentage),
-    fsc_institute = VALUES(fsc_institute), fsc_degree = VALUES(fsc_degree),
-    fsc_year = VALUES(fsc_year), fsc_percentage = VALUES(fsc_percentage);
-  `;
-  pool.query(query, [registrationNumber, matricInstitute, matricDegree, matricYear, matricPercentage, fscInstitute, fscDegree, fscYear, fscPercentage], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    res.json({ message: "Education details saved successfully!" });
-  });
 });
 
-app.get("/api/education", authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const sql = "SELECT * FROM edu_info WHERE registration_number = ?";
-  pool.query(sql, [registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    res.json(result[0] || {});
-  });
-});
-
-app.get('/api/internships', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const sql = "SELECT * FROM internships WHERE registration_number = ?";
-  pool.query(sql, [registrationNumber], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    res.json(result);
-  });
-});
-
-app.post('/api/internships', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const { title, company, duration, start_date, end_date, description, paid } = req.body;
-  const sql = `
-    INSERT INTO internships 
-    (registration_number, title, company, duration, start_date, end_date, description, paid)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-  pool.query(sql, 
-    [registrationNumber, title, company, duration, start_date, end_date, description, paid], 
-    (err, result) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({ message: "Database error" });
-      }
-      const newInternship = {
-        id: result.insertId,
-        registration_number: registrationNumber,
-        ...req.body
-      };
-      res.json(newInternship);
-    }
-  );
-});
-
-app.put('/api/internships/:id', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const internshipId = req.params.id;
-  const { title, company, duration, start_date, end_date, description, paid } = req.body;
-  const checkQuery = "SELECT * FROM internships WHERE id = ? AND registration_number = ?";
-  pool.query(checkQuery, [internshipId, registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
+app.post("/login", async (req, res) => {
+  const { email, password } = req.body;
+  const sql = "SELECT id, email, password, registration_number, is_verified FROM users2 WHERE email = ?";
+  
+  try {
+    const [result] = await pool.query(sql, [email]);
     if (result.length === 0) {
-      return res.status(403).json({ message: "Unauthorized access or internship not found" });
+      return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
-    const updateQuery = `
-      UPDATE internships 
-      SET title = ?, company = ?, duration = ?, 
-          start_date = ?, end_date = ?, description = ?, paid = ? 
-      WHERE id = ? AND registration_number = ?
-    `;
-    pool.query(updateQuery, 
-      [title, company, duration, start_date, end_date, description, paid, internshipId, registrationNumber], 
-      (err, updateResult) => {
-        if (err) {
-          console.error("Database error:", err);
-          return res.status(500).json({ message: "Database error updating internship" });
-        }
-        res.json({
-          id: parseInt(internshipId),
-          registration_number: registrationNumber,
-          title,
-          company,
-          duration,
-          start_date,
-          end_date,
-          description,
-          paid
-        });
-      }
-    );
-  });
-});
-
-app.delete('/api/internships/:id', authenticateToken, (req, res) => {
-  const sql = "DELETE FROM internships WHERE id = ?";
-  pool.query(sql, [req.params.id], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    res.json({ message: "Internship deleted successfully" });
-  });
-});
-
-app.get('/api/projects', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const sql = "SELECT * FROM projects WHERE registration_number = ? ORDER BY completion_date DESC";
-  pool.query(sql, [registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    res.json(result);
-  });
-});
-
-app.post('/api/projects', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const { project_title, project_description, completion_date, months_taken } = req.body;
-  const sql = `
-    INSERT INTO projects 
-    (registration_number, project_title, project_description, completion_date, months_taken)
-    VALUES (?, ?, ?, ?, ?)
-  `;
-  pool.query(sql, 
-    [registrationNumber, project_title, project_description, completion_date, months_taken], 
-    (err, result) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({ message: "Database error" });
-      }
-      const newProject = {
-        id: result.insertId,
-        registration_number: registrationNumber,
-        ...req.body
-      };
-      res.json(newProject);
-    }
-  );
-});
-
-app.put('/api/projects/:id', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const projectId = req.params.id;
-  const { project_title, project_description, completion_date, months_taken } = req.body;
-  const checkQuery = "SELECT * FROM projects WHERE id = ? AND registration_number = ?";
-  pool.query(checkQuery, [projectId, registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    if (result.length === 0) {
-      return res.status(403).json({ message: "Unauthorized access or project not found" });
-    }
-    const updateQuery = `
-      UPDATE projects 
-      SET project_title = ?, project_description = ?, completion_date = ?, months_taken = ? 
-      WHERE id = ? AND registration_number = ?
-    `;
-    pool.query(updateQuery, 
-      [project_title, project_description, completion_date, months_taken, projectId, registrationNumber], 
-      (err, updateResult) => {
-        if (err) {
-          console.error("Database error:", err);
-          return res.status(500).json({ message: "Database error updating project" });
-        }
-        res.json({
-          id: parseInt(projectId),
-          registration_number: registrationNumber,
-          project_title,
-          project_description,
-          completion_date,
-          months_taken
-        });
-      }
-    );
-  });
-});
-
-app.delete('/api/projects/:id', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const projectId = req.params.id;
-  const checkQuery = "SELECT * FROM projects WHERE id = ? AND registration_number = ?";
-  pool.query(checkQuery, [projectId, registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    if (result.length === 0) {
-      return res.status(403).json({ message: "Unauthorized access or project not found" });
-    }
-    const deleteQuery = "DELETE FROM projects WHERE id = ? AND registration_number = ?";
-    pool.query(deleteQuery, [projectId, registrationNumber], (err, deleteResult) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({ message: "Database error deleting project" });
-      }
-      res.json({ message: "Project deleted successfully" });
-    });
-  });
-});
-
-app.get('/api/jobs', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const sql = "SELECT * FROM jobs WHERE registration_number = ?";
-  pool.query(sql, [registrationNumber], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    res.json(result);
-  });
-});
-
-app.post('/api/jobs', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const { job_title, organization, joining_date, job_description } = req.body;
-  const sql = `
-    INSERT INTO jobs 
-    (registration_number, job_title, organization, joining_date, job_description)
-    VALUES (?, ?, ?, ?, ?)
-  `;
-  pool.query(sql, 
-    [registrationNumber, job_title, organization, joining_date, job_description], 
-    (err, result) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({ message: "Database error" });
-      }
-      const newJob = {
-        id: result.insertId,
-        registration_number: registrationNumber,
-        ...req.body
-      };
-      res.json(newJob);
-    }
-  );
-});
-
-app.put('/api/jobs/:id', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const jobId = req.params.id;
-  const { job_title, organization, joining_date, job_description } = req.body;
-  const checkQuery = "SELECT * FROM jobs WHERE id = ? AND registration_number = ?";
-  pool.query(checkQuery, [jobId, registrationNumber], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    if (result.length === 0) {
-      return res.status(403).json({ message: "Unauthorized access or job not found" });
-    }
-    const updateQuery = `
-      UPDATE jobs 
-      SET job_title = ?, organization = ?, joining_date = ?, job_description = ?
-      WHERE id = ? AND registration_number = ?
-    `;
-    pool.query(updateQuery, 
-      [job_title, organization, joining_date, job_description, jobId, registrationNumber], 
-      (err, updateResult) => {
-        if (err) return res.status(500).json({ message: "Database error updating job" });
-        res.json({
-          id: parseInt(jobId),
-          registration_number: registrationNumber,
-          ...req.body
-        });
-      }
-    );
-  });
-});
-
-app.get('/api/skills', authenticateToken, (req, res) => {
-  const regNum = req.user.registration_number;
-  const sql = "SELECT skills FROM user_skills_achievements WHERE registration_number = ?";
-  pool.query(sql, [regNum], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    let skills = [];
-    if (result[0]?.skills) {
-      try {
-        skills = typeof result[0].skills === 'string' 
-          ? JSON.parse(result[0].skills)
-          : result[0].skills;
-      } catch (e) {
-        console.error("JSON parse error:", e);
-      }
-    }
-    res.json({ skills });
-  });
-});
-
-app.post('/api/skills', authenticateToken, (req, res) => {
-  const regNum = req.user.registration_number;
-  const { skills } = req.body;
-  const sql = `
-    INSERT INTO user_skills_achievements (registration_number, skills)
-    VALUES (?, ?)
-    ON DUPLICATE KEY UPDATE
-    skills = VALUES(skills)
-  `;
-  pool.query(sql, [regNum, JSON.stringify(skills)], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    res.json({ skills });
-  });
-});
-
-app.delete('/api/skills/:id', authenticateToken, (req, res) => {
-  const regNum = req.user.registration_number;
-  const sql = "DELETE FROM user_skills_achievements WHERE id = ? AND registration_number = ? AND type = 'skill'";
-  pool.query(sql, [req.params.id, regNum], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    res.json({ message: "Skill deleted successfully" });
-  });
-});
-
-app.get('/api/achievements', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const sql = "SELECT * FROM achievements WHERE registration_number = ?";
-  pool.query(sql, [registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    res.json(result);
-  });
-});
-
-app.post('/api/achievements', authenticateToken, upload.single('file'), (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const { title, details } = req.body;
-  const filePath = req.file ? req.file.filename : null;
-  const sql = `
-    INSERT INTO achievements 
-    (registration_number, title, details, file_path)
-    VALUES (?, ?, ?, ?)
-  `;
-  pool.query(sql, 
-    [registrationNumber, title, details, filePath], 
-    (err, result) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({ message: "Database error" });
-      }
-      const newAchievement = {
-        id: result.insertId,
-        registration_number: registrationNumber,
-        title,
-        details,
-        file_path: filePath
-      };
-      res.json(newAchievement);
-    }
-  );
-});
-
-app.put('/api/achievements/:id', authenticateToken, upload.single('file'), (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const achievementId = req.params.id;
-  const { title, details } = req.body;
-  const checkQuery = "SELECT * FROM achievements WHERE id = ? AND registration_number = ?";
-  pool.query(checkQuery, [achievementId, registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
-    if (result.length === 0) {
-      return res.status(403).json({ message: "Unauthorized access or achievement not found" });
-    }
-    let updateQuery;
-    let queryParams;
-    if (req.file) {
-      updateQuery = `
-        UPDATE achievements 
-        SET title = ?, details = ?, file_path = ? 
-        WHERE id = ? AND registration_number = ?
-      `;
-      queryParams = [title, details, req.file.filename, achievementId, registrationNumber];
-    } else {
-      updateQuery = `
-        UPDATE achievements 
-        SET title = ?, details = ? 
-        WHERE id = ? AND registration_number = ?
-      `;
-      queryParams = [title, details, achievementId, registrationNumber];
-    }
-    pool.query(updateQuery, queryParams, (err, updateResult) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({ message: "Database error updating achievement" });
-      }
-      pool.query("SELECT * FROM achievements WHERE id = ?", [achievementId], (err, fetchResult) => {
-        if (err || fetchResult.length === 0) {
-          console.error("Error fetching updated achievement:", err);
-          return res.status(500).json({ message: "Error fetching updated achievement" });
-        }
-        res.json(fetchResult[0]);
+    const user = result[0];
+    if (!user.is_verified) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "Account pending verification. Please wait for admin approval." 
       });
-    });
-  });
-});
-
-app.delete('/api/achievements/:id', authenticateToken, (req, res) => {
-  const registrationNumber = req.user.registration_number;
-  const achievementId = req.params.id;
-  const checkQuery = "SELECT * FROM achievements WHERE id = ? AND registration_number = ?";
-  pool.query(checkQuery, [achievementId, registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ message: "Database error" });
     }
-    if (result.length === 0) {
-      return res.status(403).json({ message: "Unauthorized access or achievement not found" });
+    
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (isMatch) {
+      const token = jwt.sign(
+        { id: user.id, email: user.email, registration_number: user.registration_number },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+      );
+      res.json({ success: true, token });
+    } else {
+      res.status(401).json({ success: false, message: "Invalid credentials" });
     }
-    const deleteQuery = "DELETE FROM achievements WHERE id = ? AND registration_number = ?";
-    pool.query(deleteQuery, [achievementId, registrationNumber], (err, deleteResult) => {
-      if (err) {
-        console.error("Database error:", err);
-        return res.status(500).json({ message: "Database error deleting achievement" });
-      }
-      res.json({ message: "Achievement deleted successfully" });
-    });
-  });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
 });
 
 app.post("/api/send-email", upload.single('attachment'), (req, res) => {
@@ -924,7 +654,6 @@ app.post("/api/send-email", upload.single('attachment'), (req, res) => {
     additionalInfo
   } = req.body;
 
-  // Create transporter using Gmail
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -933,7 +662,6 @@ app.post("/api/send-email", upload.single('attachment'), (req, res) => {
     }
   });
 
-  // Prepare email options
   const mailOptions = {
     from: process.env.EMAIL_USER,
     to: 'msaadkhan200212@gmail.com',
@@ -962,7 +690,6 @@ app.post("/api/send-email", upload.single('attachment'), (req, res) => {
     `
   };
 
-  // Add attachment if file was uploaded
   if (req.file) {
     mailOptions.attachments = [{
       filename: req.file.originalname,
