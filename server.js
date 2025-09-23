@@ -71,22 +71,24 @@ const authenticateToken = (req, res, next) => {
 };
 
 // Your routes
-app.get('/api/search', (req, res) => {
+// Corrected /api/search route
+app.get('/api/search', async (req, res) => {
   const searchQuery = req.query.q;
   const sql = `SELECT id, name, profile_picture, registration_number, department 
                FROM users2 
                WHERE name LIKE ? AND is_verified = 1
                LIMIT 10`;
-  pool.query(sql, [`%${searchQuery}%`], (err, results) => {
-    if (err) {
-      console.error("Search error:", err);
-      return res.status(500).json({ message: "Database error" });
-    }
+  try {
+    // Use async/await to handle the promise
+    const [results] = await pool.query(sql, [`%${searchQuery}%`]);
     res.json(results.map(user => ({
       ...user,
       profilePicture: user.profile_picture ? `/uploads/${user.profile_picture}` : null
     })));
-  });
+  } catch (err) {
+    console.error("Search error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
 });
 
 // Corrected Login Route
