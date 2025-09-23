@@ -308,79 +308,102 @@ app.get('/api/ecard/view', authenticateToken, (req, res) => {
   });
 });
 
-app.get('/api/profile/:registrationNumber', (req, res) => {
-  const registrationNumber = req.params.registrationNumber;
-  const sql = `SELECT name, whatsapp_number, profile_picture, certificates, 
-               is_employed, looking_for_job, graduation_year, department 
-               FROM users2 
-               WHERE registration_number = ?`;
-  pool.query(sql, [registrationNumber], (err, result) => {
-    if (err) {
-      console.error("Profile fetch error:", err);
-      return res.status(500).json({ message: "Database error" });
+// Public route to view basic profile (from users2 table)
+app.get('/api/profile/:registrationNumber', async (req, res) => {
+  const { registrationNumber } = req.params;
+  const sql = `
+    SELECT name, profile_picture AS profilePicture, whatsapp_number AS whatsapp, 
+           is_employed AS isEmployed, looking_for_job AS lookingForJob, 
+           graduation_year AS graduationYear, department, registration_number
+    FROM users2 
+    WHERE registration_number = ? AND is_verified = 1
+  `;
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Profile not found or not verified" });
     }
-    if (result.length > 0) {
-      const user = result[0];
-      res.json({
-        name: user.name,
-        whatsapp: user.whatsapp_number,
-        profilePicture: user.profile_picture ? `/uploads/${user.profile_picture}` : null,
-        certificates: user.certificates ? `/uploads/${user.certificates}` : null,
-        isEmployed: Boolean(user.is_employed),
-        lookingForJob: Boolean(user.looking_for_job),
-        graduationYear: user.graduation_year,
-        department: user.department
-      });
-    } else {
-      res.status(404).json({ message: "User not found" });
-    }
-  });
+    const user = results[0];
+    user.profilePicture = user.profilePicture ? `/uploads/${user.profilePicture}` : null;
+    res.json(user);
+  } catch (err) {
+    console.error("Profile view error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
 });
 
-app.get('/api/education/:registrationNumber', (req, res) => {
-  const regNum = req.params.registrationNumber;
-  const sql = "SELECT * FROM edu_info WHERE registration_number = ?";
-  pool.query(sql, [regNum], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    res.json(result[0] || {});
-  });
+// Education (from edu_info table)
+app.get('/api/education/:registrationNumber', async (req, res) => {
+  const { registrationNumber } = req.params;
+  const sql = `
+    SELECT matric_institute, matric_degree, matric_year, matric_percentage,
+           fsc_institute, fsc_degree, fsc_year, fsc_percentage
+    FROM edu_info 
+    WHERE registration_number = ?
+  `;
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    res.json(results[0] || null);  // Return first row or null
+  } catch (err) {
+    console.error("Education error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
 });
 
-app.get('/api/skills/:registrationNumber', (req, res) => {
-  const regNum = req.params.registrationNumber;
+// Internships (from internships table)
+app.get('/api/internships/:registrationNumber', async (req, res) => {
+  const { registrationNumber } = req.params;
+  const sql = "SELECT * FROM internships WHERE registration_number = ?";
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    res.json(results);
+  } catch (err) {
+    console.error("Internships error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// Projects (from projects table)
+app.get('/api/projects/:registrationNumber', async (req, res) => {
+  const { registrationNumber } = req.params;
+  const sql = "SELECT * FROM projects WHERE registration_number = ?";
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    res.json(results);
+  } catch (err) {
+    console.error("Projects error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
+});
+
+// Skills (from user_skills_achievements table)
+app.get('/api/skills/:registrationNumber', async (req, res) => {
+  const { registrationNumber } = req.params;
   const sql = "SELECT skills FROM user_skills_achievements WHERE registration_number = ?";
-  pool.query(sql, [regNum], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    const skills = result[0]?.skills ? JSON.parse(result[0].skills) : [];
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    let skills = [];
+    if (results[0]?.skills) {
+      skills = JSON.parse(results[0].skills);
+    }
     res.json(skills);
-  });
+  } catch (err) {
+    console.error("Skills error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
 });
 
-app.get('/api/internships/:registrationNumber', (req, res) => {
-  const regNum = req.params.registrationNumber;
-  const sql = "SELECT * FROM internships WHERE registration_number = ? ORDER BY start_date DESC";
-  pool.query(sql, [regNum], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    res.json(result);
-  });
-});
-
-app.get('/api/projects/:registrationNumber', (req, res) => {
-  const regNum = req.params.registrationNumber;
-  const sql = "SELECT * FROM projects WHERE registration_number = ? ORDER BY completion_date DESC";
-  pool.query(sql, [regNum], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    res.json(result);
-  });
-});
-
-app.get('/api/achievements/:registrationNumber', (req, res) => {
-  const regNum = req.params.registrationNumber;
-  const sql = "SELECT * FROM achievements WHERE registration_number = ? ORDER BY id DESC";
-  pool.query(sql, [regNum], (err, result) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    res.json(result);
-  });
+// Achievements (from achievements table) - Similar to your existing /api/achievements, but parameterized and public
+app.get('/api/achievements/:registrationNumber', async (req, res) => {
+  const { registrationNumber } = req.params;
+  const sql = "SELECT * FROM achievements WHERE registration_number = ?";
+  try {
+    const [results] = await pool.query(sql, [registrationNumber]);
+    res.json(results);
+  } catch (err) {
+    console.error("Achievements error:", err);
+    res.status(500).json({ message: "Database error" });
+  }
 });
 
 app.get("/api/profile", authenticateToken, (req, res) => {
