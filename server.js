@@ -10,6 +10,7 @@ const fs = require("fs");
 const bcrypt = require("bcryptjs");
 const app = express();
 
+// Use the FRONTEND_URL from environment variables for CORS
 app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
 app.use(express.json());
 
@@ -55,7 +56,10 @@ const pool = mysql.createPool({
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  if (token == null) return res.sendStatus(401);
+  if (token == null) {
+    console.log("Authorization header missing or token is null.");
+    return res.sendStatus(401);
+  }
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
