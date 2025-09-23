@@ -129,25 +129,23 @@ app.post("/login", async (req, res) => {
 });
 
 // Corrected Signup Route
-app.post("/signup", (req, res) => {
+// Corrected Signup Route
+app.post("/signup", async (req, res) => {
   const {
     name,
     email,
-    password, // Hash the password before storing
+    password, 
     registration_number,
     graduation_year,
     department,
     whatsapp_number
   } = req.body;
   
-  const checkEmailSQL = "SELECT * FROM users2 WHERE email = ?";
-  
-  // Use pool.query instead of db.pool
-  pool.query(checkEmailSQL, [email], (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ success: false, message: "Database error" });
-    }
+  try {
+    const checkEmailSQL = "SELECT * FROM users2 WHERE email = ?";
+    // Use async/await for the database query
+    const [result] = await pool.query(checkEmailSQL, [email]);
+
     if (result.length > 0) {
       return res.status(400).json({
         success: false,
@@ -155,46 +153,39 @@ app.post("/signup", (req, res) => {
       });
     }
 
-    // Generate a salt and hash the password
-    bcrypt.hash(password, 10, (err, hashedPassword) => {
-      if (err) {
-        console.error("Password hashing error:", err);
-        return res.status(500).json({ success: false, message: "Failed to create user account." });
-      }
+    // Use async/await to securely hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const insertUserSQL = `
+      INSERT INTO users2 (
+        name, 
+        email, 
+        password,
+        registration_number, 
+        graduation_year, 
+        department, 
+        whatsapp_number,
+        is_verified
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `;
 
-      const insertUserSQL = `
-        INSERT INTO users2 (
-          name, 
-          email, 
-          password, // Store the hashed password
-          registration_number, 
-          graduation_year, 
-          department, 
-          whatsapp_number,
-          is_verified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `;
+    // Use async/await for the database query
+    await pool.query(
+      insertUserSQL,
+      [name, email, hashedPassword, registration_number, graduation_year, department, whatsapp_number, false]
+    );
 
-      // Use pool.query instead of db.pool, and pass the hashed password
-      pool.query(
-        insertUserSQL,
-        [name, email, hashedPassword, registration_number, graduation_year, department, whatsapp_number, false],
-        (err, result) => {
-          if (err) {
-            console.error("Error creating user:", err);
-            return res.status(500).json({
-              success: false,
-              message: "Failed to create user account. Please try again."
-            });
-          }
-          res.status(201).json({
-            success: true,
-            message: "Account created successfully!"
-          });
-        }
-      );
+    res.status(201).json({
+      success: true,
+      message: "Account created successfully!"
     });
-  });
+
+  } catch (err) {
+    console.error("Signup error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create user account. Please try again."
+    });
+  }
 });
 
 app.get('/api/ecard/status', authenticateToken, (req, res) => {
