@@ -89,16 +89,17 @@ app.get('/api/search', (req, res) => {
   });
 });
 
+// Corrected Login Route
 app.post("/login", (req, res) => {
   const { email, password } = req.body;
-  console.log("Login attempt for email:", email);
   const sql = "SELECT id, email, password, registration_number, is_verified FROM users2 WHERE email = ?";
+  
+  // Use pool.query instead of db.pool
   pool.query(sql, [email], async (err, result) => {
     if (err) {
       console.error("Database error:", err);
       return res.status(500).json({ error: "Database error" });
     }
-    console.log("Database result:", result);
     if (result.length === 0) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
@@ -109,9 +110,10 @@ app.post("/login", (req, res) => {
         message: "Account pending verification. Please wait for admin approval." 
       });
     }
-    // TEMPORARY: Direct password comparison
-    // WARNING: This is not secure and should only be used during development
-    if (password === user.password) {
+    
+    // Use bcryptjs to securely compare the password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (isMatch) {
       const token = jwt.sign(
         { id: user.id, email: user.email, registration_number: user.registration_number },
         process.env.JWT_SECRET,
@@ -124,17 +126,21 @@ app.post("/login", (req, res) => {
   });
 });
 
+// Corrected Signup Route
 app.post("/signup", (req, res) => {
   const {
     name,
     email,
-    password,
+    password, // Hash the password before storing
     registration_number,
     graduation_year,
     department,
     whatsapp_number
   } = req.body;
+  
   const checkEmailSQL = "SELECT * FROM users2 WHERE email = ?";
+  
+  // Use pool.query instead of db.pool
   pool.query(checkEmailSQL, [email], (err, result) => {
     if (err) {
       console.error("Database error:", err);
@@ -146,35 +152,46 @@ app.post("/signup", (req, res) => {
         message: "Email already in use. Please use a different email or login to your existing account."
       });
     }
-    const insertUserSQL = `
-      INSERT INTO users2 (
-        name, 
-        email, 
-        password, 
-        registration_number, 
-        graduation_year, 
-        department, 
-        whatsapp_number,
-        is_verified
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-    pool.query(
-      insertUserSQL,
-      [name, email, password, registration_number, graduation_year, department, whatsapp_number, false],
-      (err, result) => {
-        if (err) {
-          console.error("Error creating user:", err);
-          return res.status(500).json({
-            success: false,
-            message: "Failed to create user account. Please try again."
+
+    // Generate a salt and hash the password
+    bcrypt.hash(password, 10, (err, hashedPassword) => {
+      if (err) {
+        console.error("Password hashing error:", err);
+        return res.status(500).json({ success: false, message: "Failed to create user account." });
+      }
+
+      const insertUserSQL = `
+        INSERT INTO users2 (
+          name, 
+          email, 
+          password, // Store the hashed password
+          registration_number, 
+          graduation_year, 
+          department, 
+          whatsapp_number,
+          is_verified
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+      // Use pool.query instead of db.pool, and pass the hashed password
+      pool.query(
+        insertUserSQL,
+        [name, email, hashedPassword, registration_number, graduation_year, department, whatsapp_number, false],
+        (err, result) => {
+          if (err) {
+            console.error("Error creating user:", err);
+            return res.status(500).json({
+              success: false,
+              message: "Failed to create user account. Please try again."
+            });
+          }
+          res.status(201).json({
+            success: true,
+            message: "Account created successfully!"
           });
         }
-        res.status(201).json({
-          success: true,
-          message: "Account created successfully!"
-        });
-      }
-    );
+      );
+    });
   });
 });
 
