@@ -92,16 +92,13 @@ app.get('/api/search', async (req, res) => {
 });
 
 // Corrected Login Route
-app.post("/login", (req, res) => {
+app.post("/login", async (req, res) => {
   const { email, password } = req.body;
   const sql = "SELECT id, email, password, registration_number, is_verified FROM users2 WHERE email = ?";
   
-  // Use pool.query instead of db.pool
-  pool.query(sql, [email], async (err, result) => {
-    if (err) {
-      console.error("Database error:", err);
-      return res.status(500).json({ error: "Database error" });
-    }
+  try {
+    // Use async/await to handle the database promise
+    const [result] = await pool.query(sql, [email]);
     if (result.length === 0) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
@@ -113,7 +110,7 @@ app.post("/login", (req, res) => {
       });
     }
     
-    // Use bcryptjs to securely compare the password
+    // Use await for the bcrypt comparison
     const isMatch = await bcrypt.compare(password, user.password);
     if (isMatch) {
       const token = jwt.sign(
@@ -125,7 +122,10 @@ app.post("/login", (req, res) => {
     } else {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
-  });
+  } catch (err) {
+    console.error("Database or login error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
 });
 
 // Corrected Signup Route
