@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require("express");
 const multer = require("multer");
-const mysql = require("mysql2/promise"); // Changed to mysql2/promise to use async/await
+const mysql = require("mysql2/promise");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const path = require("path");
@@ -9,7 +9,6 @@ const nodemailer = require("nodemailer");
 const fs = require("fs");
 const bcrypt = require("bcryptjs");
 const app = express();
-const jwt_decode = require("jwt-decode");
 
 app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
 app.use(express.json());
@@ -122,7 +121,7 @@ app.post("/signup", async (req, res) => {
     graduation_year,
     department,
     whatsapp_number,
-    role = 'alumni' // Default role to 'alumni'
+    role = 'alumni'
   } = req.body;
   
   try {
